@@ -1,0 +1,444 @@
+# Research Vision: Open Continual Learning Environment for LLMs
+
+## Vision
+
+Today's large language models are trained offline.
+
+The lifecycle is typically:
+
+* Collect massive datasets.
+* Pretrain the model.
+* Fine-tune using instruction data and RLHF.
+* Deploy the model.
+* Millions of users interact with it.
+* User interactions are logged.
+* Months later, a new version of the model is trained.
+
+During deployment, the model's parameters remain essentially frozen. Although users collectively generate an enormous amount of valuable experience every day, almost none of that experience directly contributes to improving the deployed model.
+
+The central research question is:
+
+> **Can an LLM safely and continuously learn from real-world usage while it is deployed?**
+
+---
+
+# Problem Statement
+
+Real-world user interactions contain valuable information that current training pipelines largely ignore.
+
+Examples include:
+
+* Better coding solutions.
+* Better reasoning paths.
+* User corrections.
+* Execution results.
+* Successful conversations.
+* Failed conversations.
+* Long-term interaction patterns.
+
+If a model could continually learn from these experiences, it could improve throughout its lifetime instead of waiting for periodic retraining.
+
+However, directly updating model weights after every interaction is dangerous.
+
+Major challenges include:
+
+* Catastrophic forgetting.
+* Noisy or malicious user feedback.
+* Distribution shifts.
+* Reinforcing incorrect behaviour.
+* Weight instability.
+* Reward hacking.
+* High computational cost.
+
+Current systems therefore choose to freeze the model or rely heavily on external memory rather than enabling true continual learning.
+
+This creates an important research gap.
+
+---
+
+# Research Goal
+
+Develop an **open research environment** that enables researchers to study continual learning for deployed LLMs.
+
+Instead of proposing yet another RL algorithm, the project aims to create an ecosystem where different continual-learning algorithms can be developed, tested, and compared.
+
+Think of it as an "OpenAI Gym" for lifelong LLM learning.
+
+---
+
+# Long-Term Vision
+
+A deployed LLM should become capable of:
+
+* Solving tasks.
+* Receiving feedback.
+* Determining whether the experience is valuable.
+* Learning safely.
+* Preserving previously learned abilities.
+* Improving throughout its lifetime.
+
+The goal is not merely online fine-tuning.
+
+The goal is to build an operating environment for lifelong learning.
+
+---
+
+# Proposed Environment
+
+The environment should operate on **real tasks**, not synthetic games.
+
+Possible domains include:
+
+### Coding
+
+* Generate code.
+* Execute tests.
+* Receive compiler errors.
+* Receive user edits.
+* Receive reviewer feedback.
+
+### Mathematics
+
+* Solve problems.
+* Verify correctness.
+* Receive corrected solutions.
+
+### Question Answering
+
+* Answer questions.
+* Receive factual corrections.
+* Observe whether users accept or reject answers.
+
+### Document Editing
+
+* Draft documents.
+* Compare with final human edits.
+
+### Agent Tasks
+
+* Multi-step planning.
+* Tool usage.
+* Task completion.
+* Long-term success metrics.
+
+Every interaction becomes one learning episode.
+
+---
+
+# Proposed Interaction Loop
+
+User Task
+
+↓
+
+LLM generates response
+
+↓
+
+Environment evaluates
+
+↓
+
+Collect feedback
+
+↓
+
+Store interaction trace
+
+↓
+
+Learning algorithm decides
+
+* Ignore
+* Store as memory
+* Update lightweight adapter
+* Update base model
+
+↓
+
+Evaluate regression
+
+↓
+
+Continue serving users
+
+---
+
+# Core Components
+
+## 1. Environment
+
+Responsible for:
+
+* Running tasks.
+* Collecting interactions.
+* Producing rewards.
+* Measuring long-term performance.
+
+---
+
+## 2. Experience Store
+
+Stores complete trajectories.
+
+Not only:
+
+Prompt → Response
+
+But:
+
+Prompt
+
+↓
+
+Reasoning
+
+↓
+
+Output
+
+↓
+
+Execution
+
+↓
+
+Corrections
+
+↓
+
+Reward
+
+↓
+
+Future outcome
+
+This creates high-quality continual-learning data.
+
+---
+
+## 3. Reward Pipeline
+
+Rewards may include:
+
+* Execution success.
+* Unit tests.
+* Human approval.
+* Reviewer model score.
+* Efficiency.
+* Safety.
+* Long-term user satisfaction.
+
+Multiple reward functions should be supported.
+
+---
+
+## 4. Learning Controller
+
+Potentially the most interesting research component.
+
+Instead of automatically updating weights, the controller decides:
+
+Should this interaction be learned?
+
+If yes:
+
+* Ignore
+* Store in memory
+* Update adapter
+* Update model weights
+
+This converts continual learning into a sequential decision-making problem.
+
+---
+
+## 5. Continual Learning Algorithms
+
+The environment should support multiple learning methods.
+
+Examples:
+
+* PPO variants.
+* GRPO.
+* DPO-style optimisation.
+* LoRA continual updates.
+* Replay-buffer methods.
+* Memory-based learning.
+* Future continual-learning algorithms.
+
+The environment should remain algorithm-agnostic.
+
+---
+
+# Why an Open Environment?
+
+Current research often introduces:
+
+* A new algorithm.
+* A new benchmark.
+* A new dataset.
+
+But there is no widely adopted open environment specifically designed for studying continuous online learning of deployed LLMs.
+
+Researchers repeatedly rebuild infrastructure instead of focusing on the learning problem.
+
+An open environment would standardise:
+
+* Interaction logging.
+* Rewards.
+* Replay.
+* Evaluation.
+* Forgetting metrics.
+* Safety checks.
+* Continuous deployment experiments.
+
+---
+
+# Evaluation Metrics
+
+Performance alone is insufficient.
+
+The environment should measure:
+
+* Task success.
+* Learning speed.
+* Sample efficiency.
+* Catastrophic forgetting.
+* Generalisation.
+* Reward quality.
+* Stability.
+* Computational cost.
+* Safety.
+* Long-term improvement.
+
+---
+
+# Potential Research Contributions
+
+This project can evolve into multiple research directions.
+
+## Paper 1
+
+Open Continual Learning Environment for Large Language Models
+
+Contribution:
+
+An extensible open-source platform for evaluating continual-learning methods on real-world tasks.
+
+---
+
+## Paper 2
+
+Safe Continual Weight Updates for Deployed LLMs
+
+Contribution:
+
+A framework for deciding when and how a model should update itself during deployment.
+
+---
+
+## Paper 3
+
+Learning Controller for Lifelong LLMs
+
+Contribution:
+
+An RL-based controller that decides whether experiences should be ignored, memorised, adapted through lightweight updates, or incorporated into long-term model parameters.
+
+---
+
+## Paper 4
+
+Reward Engineering for Continual LLM Learning
+
+Contribution:
+
+Study how different reward sources affect continual learning.
+
+Possible reward signals include execution feedback, human edits, reviewer models, user acceptance, and long-term task outcomes.
+
+---
+
+# Alternative Solution Directions
+
+The environment should not assume a single correct learning strategy.
+
+Researchers should be able to compare different approaches, such as:
+
+### Approach A: Continuous Weight Updates
+
+Update model parameters after verified interactions.
+
+Pros:
+
+* Permanent knowledge acquisition.
+
+Cons:
+
+* Risk of forgetting and instability.
+
+---
+
+### Approach B: Adapter-Based Learning
+
+Update only lightweight LoRA adapters.
+
+Pros:
+
+* Safer and computationally cheaper.
+
+Cons:
+
+* Knowledge remains fragmented across adapters.
+
+---
+
+### Approach C: External Memory
+
+Store new information without modifying weights.
+
+Pros:
+
+* No catastrophic forgetting.
+
+Cons:
+
+* Limited improvement in core reasoning.
+
+---
+
+### Approach D: Hybrid Learning
+
+Combine memory, adapters, and occasional base-model updates.
+
+Pros:
+
+* Balances adaptability and stability.
+
+Cons:
+
+* More complex system design.
+
+---
+
+### Approach E: RL-Based Learning Controller
+
+Train a policy that decides how each new experience should be handled.
+
+Pros:
+
+* Adaptive and potentially more efficient.
+
+Cons:
+
+* Requires additional optimisation and evaluation.
+
+---
+
+# End Goal
+
+The long-term objective is **not** to propose a single continual-learning algorithm.
+
+The goal is to establish an **open, extensible research environment** that enables the community to explore lifelong learning in deployed LLMs.
+
+If successful, this platform could become for continual LLM learning what OpenAI Gym became for reinforcement learning: a common foundation on which many future algorithms, benchmarks, and research papers are built.

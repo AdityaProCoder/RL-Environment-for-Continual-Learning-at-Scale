@@ -1,0 +1,7 @@
+# The notebook embeds the complete gcl package, so the Space image only needs
+# the runtime definition and the generated notebook. Keep experiment artifacts
+# and local environments out of both local builds and Space uploads.
+**
+!Dockerfile
+!app.py
+!kaggle_continual_learning.ipynb

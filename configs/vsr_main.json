@@ -1,0 +1,35 @@
+{
+  "_comment": "VSR main run — verified skill regeneration vs controls + ablations. Real distribution shift across code + math.",
+  "stream": {
+    "seed": 42,
+    "families": [
+      {"corpus": "mbpp",  "name": "arith",       "n_train": 8, "n_holdout": 4, "offset": 0},
+      {"corpus": "math",  "name": "math_word",   "n_train": 8, "n_holdout": 4, "offset": 0},
+      {"corpus": "mbpp",  "name": "string",      "n_train": 8, "n_holdout": 4, "offset": 12},
+      {"corpus": "mbpp",  "name": "arith renamed","n_train": 8, "n_holdout": 4, "offset": 24, "drift": {"kind": "api_rename", "old": "heapq", "new": "priority_queue"}},
+      {"corpus": "mbpp",  "name": "arith_para",  "n_train": 8, "n_holdout": 4, "offset": 36, "drift": {"kind": "spec_paraphrase", "prefix": "Reframed for deployment (paraphrased, semantics withheld): "}}
+    ]
+  },
+  "experiment": {
+    "model_name": "Qwen/Qwen3.5-2B",
+    "lora_r": 16, "lora_alpha": 32,
+    "learning_rate": 0.0003,
+    "train_steps_per_update": 4,
+    "max_updates": 80,
+    "temperature": 0.1,
+    "max_new_tokens": 256,
+    "gate_epsilon": 0.05,
+    "holdout_size": 8,
+    "use_reference_injection": true,
+    "use_vsr_gate": true,
+    "vsr_learners": ["vsr"],
+    "refinject_learners": ["always_lora_ref"],
+    "vault_commit_min": 0.9,
+    "vault_retrieve_k": 3,
+    "vault_gate_check": 3,
+    "out_dir": "runs/vsr_main",
+    "seed": 42
+  },
+  "learners": ["frozen", "always_lora", "replay", "ewc", "always_lora_ref", "vsr"],
+  "out_dir": "runs/vsr_main"
+}

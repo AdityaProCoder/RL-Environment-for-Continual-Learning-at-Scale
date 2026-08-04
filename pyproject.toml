@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open_continual_env"
+version = "0.1.0"
+description = "Open Research Environment for Continual Learning in Deployed LLMs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.1.0",
+    "gymnasium>=0.29.0",
+    "torch",
+    "transformers",
+    "peft",
+    "datasets",
+    "numpy",
+    "matplotlib",
+    "pytest",
+    "pydantic",
+    "openai>=1.0.0",
+    "httpx",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["open_continual_env*"]

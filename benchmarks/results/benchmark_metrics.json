@@ -1,0 +1,107 @@
+{
+  "Memory_Replay": {
+    "mean_reward": 0.1984785213171587,
+    "task_success_rate": 0.0,
+    "learning_curve": [
+      0.19847645054750204,
+      0.1984758008578298,
+      0.1984796241528562,
+      0.19848137846844588,
+      0.198479129357077,
+      0.19847874451924138
+    ],
+    "accuracy_matrix": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ]
+    ],
+    "catastrophic_forgetting": 0.0,
+    "backward_transfer": 0.0,
+    "forward_transfer": 0.0,
+    "weight_stability": 0.9900990099009901,
+    "metrics": {
+      "task_success_rate": 0.0,
+      "sample_efficiency": 0.0,
+      "learning_speed": 4.5879434786844084e-07,
+      "catastrophic_forgetting": 0.0,
+      "backward_transfer": 0.0,
+      "forward_transfer": 0.0,
+      "weight_stability": 0.9900990099009901
+    }
+  },
+  "LoRA_Online": {
+    "mean_reward": 0.19848101863735834,
+    "task_success_rate": 0.0,
+    "learning_curve": [
+      0.19847774495437193,
+      0.1984819582558497,
+      0.19848189827753365,
+      0.19848291292036527,
+      0.19847937925334222,
+      0.19848221816268727
+    ],
+    "accuracy_matrix": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ]
+    ],
+    "catastrophic_forgetting": 0.0,
+    "backward_transfer": 0.0,
+    "forward_transfer": 0.0,
+    "weight_stability": 0.9900990099009901,
+    "metrics": {
+      "task_success_rate": 0.0,
+      "sample_efficiency": 0.0,
+      "learning_speed": 8.946416630684074e-07,
+      "catastrophic_forgetting": 0.0,
+      "backward_transfer": 0.0,
+      "forward_transfer": 0.0,
+      "weight_stability": 0.9900990099009901
+    }
+  },
+  "Hybrid": {
+    "mean_reward": 0.19848262468911426,
+    "task_success_rate": 0.0,
+    "learning_curve": [
+      0.19848226314677364,
+      0.1984824430831603,
+      0.1984822281591171,
+      0.19848376263703146,
+      0.19848254804647286,
+      0.1984825030621301
+    ],
+    "accuracy_matrix": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0
+      ]
+    ],
+    "catastrophic_forgetting": 0.0,
+    "backward_transfer": 0.0,
+    "forward_transfer": 0.0,
+    "weight_stability": 0.9900990099009901,
+    "metrics": {
+      "task_success_rate": 0.0,
+      "sample_efficiency": 0.0,
+      "learning_speed": 4.7983071294055435e-08,
+      "catastrophic_forgetting": 0.0,
+      "backward_transfer": 0.0,
+      "forward_transfer": 0.0,
+      "weight_stability": 0.9900990099009901
+    }
+  }
+}

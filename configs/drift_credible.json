@@ -1,0 +1,28 @@
+{
+  "stream": {
+    "seed": 42,
+    "families": [
+      {"corpus": "mbpp", "name": "arith",   "n_train": 8, "n_holdout": 4, "offset": 0},
+      {"corpus": "mbpp", "name": "string",  "n_train": 8, "n_holdout": 4, "offset": 12},
+      {"corpus": "mbpp", "name": "arith_drift", "n_train": 8, "n_holdout": 4, "offset": 24,
+       "drift": {"kind": "spec_paraphrase",
+                  "prefix": "Reframed (semantics unchanged, surface form drifted): "}}
+    ]
+  },
+  "experiment": {
+    "model_name": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+    "lora_r": 16, "lora_alpha": 32,
+    "learning_rate": 0.00035,
+    "train_steps_per_update": 4,
+    "max_updates": 60,
+    "temperature": 0.05,
+    "max_new_tokens": 256,
+    "gate_epsilon": 0.05,
+    "out_dir": "runs/drift_credible",
+    "holdout_size": 8,
+    "enable_grpo": false,
+    "seed": 42
+  },
+  "learners": ["frozen", "always_lora", "replay", "ewc", "controller"],
+  "out_dir": "runs/drift_credible"
+}

@@ -1,0 +1,19 @@
+[project]
+name = "qwen35-continual"
+version = "0.1.0"
+username = "holamigohello"
+
+[source]
+include = ["gcl", "build_notebook.py", "run_benchmark.py", "pyproject.toml"]
+src_dataset_slug = "holamigohello/qwen35-gcl-src"
+
+[data]
+dataset_slug = "holamigohello/qwen35-gcl-data"
+
+[feature]
+branches = ["main"]
+heavy_branches = ["main"]
+default_gpu = "t4x2"
+kernel_slug_template = "holamigohello/continual-learning-qwen35"
+notebook_command = "python build_notebook.py"
+output_glob = "*.json"

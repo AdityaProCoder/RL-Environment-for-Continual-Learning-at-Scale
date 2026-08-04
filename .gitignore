@@ -1,0 +1,33 @@
+# Python / Virtual Environment
+.venv/
+.env
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+uv.lock
+
+# IDE / Agent caches
+.agents/
+.qoder/
+.kagglepipe/
+
+# Temporary run outputs & local logs
+_nbout*
+_nbtest
+_live_*
+_pullnb
+kagglelogs/
+kaggle_out/
+scratch/
+docker-build.log
+docker-build.err
+unsloth_compiled_cache/
+
+# Local model adapters and heavy scratch runs (keep benchmark_results and downloaded_results tracked)
+adapters/
+kaggle_quick_check/
+results_overnight/
+results_qwen35_*
+results_test_*
+test_results/

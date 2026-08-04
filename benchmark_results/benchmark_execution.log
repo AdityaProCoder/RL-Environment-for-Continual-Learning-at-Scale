@@ -1,0 +1,12 @@
+[2026-07-28T05:05:10.312011+00:00] === Starting Empirical Continual Learning Benchmark Execution ===
+[2026-07-28T05:05:10.312011+00:00] Target Endpoint : http://127.0.0.1:8000/v1
+[2026-07-28T05:05:10.312509+00:00] Target Model    : google/gemma-4-e4b
+[2026-07-28T05:05:10.312509+00:00] Local GPU PEFT  : False
+[2026-07-28T05:05:10.312509+00:00] Output Directory: D:\Project\continuos env\benchmark_results
+[2026-07-28T05:05:10.968687+00:00] Active Dataset  : MBPP (2 tasks loaded)
+[2026-07-28T05:05:10.969186+00:00] Eval Interval   : Every 10 tasks
+[2026-07-28T05:05:10.969186+00:00] Episodes / Task : 3
+[2026-07-28T05:05:13.364367+00:00] NOTICE: LM Studio endpoint is not online at http://127.0.0.1:8000/v1. Running in offline simulation mode.
+[2026-07-28T05:06:02.809646+00:00] 
+--- Initiating Benchmark for Baseline: Memory_Replay ---
+[2026-07-28T05:06:02.810147+00:00] [Memory_Replay] Performing 0-shot baseline evaluation...

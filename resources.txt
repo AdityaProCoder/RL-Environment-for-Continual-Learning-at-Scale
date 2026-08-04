@@ -1,0 +1,66 @@
+# Project Feasibility & Available Resources
+
+## Current Compute Resources
+
+### Local Hardware
+
+* GPU: NVIDIA GeForce RTX 4060 Ti (16 GB VRAM)
+* Capable of running and fine-tuning compact open-weight LLMs (approximately 2B to 7B parameter range depending on method).
+* Suitable for:
+
+  * LoRA/QLoRA fine-tuning
+  * Reinforcement learning experiments on small models
+  * Continual learning prototypes
+  * Running inference services
+  * Building and evaluating the proposed continual learning environment
+
+### Cloud Resources
+
+* Hugging Face Compute Credits: **US$50**
+* Can be used for:
+
+  * Short-term training runs
+  * Larger evaluation experiments
+  * Running models that exceed local GPU capacity
+  * Benchmark validation
+
+## Initial Research Models
+
+Potential starting models include:
+
+* Gemma 3 (4B)
+* Qwen 2.5/3 small variants
+* Llama small open-weight variants
+* SmolLM-family models (for rapid experimentation)
+
+These models are sufficiently small for rapid iteration while still being capable of meaningful coding and reasoning tasks.
+
+## Development Strategy
+
+The project will follow an incremental approach:
+
+### Phase 1
+
+Build the continual learning environment and interaction logging system.
+
+### Phase 2
+
+Implement baseline continual learning methods (memory, replay, LoRA updates).
+
+### Phase 3
+
+Design and evaluate safe continual weight-update mechanisms.
+
+### Phase 4
+
+Compare multiple continual learning strategies using the same environment.
+
+### Phase 5
+
+Release the environment as an open-source research platform and prepare the first publication.
+
+## Long-Term Vision
+
+As additional compute becomes available through grants, cloud credits, collaborations, or institutional resources, the environment should scale naturally to larger models without requiring major architectural changes.
+
+The initial research is designed to validate the ideas on compact open-weight models before attempting larger-scale continual learning experiments.
