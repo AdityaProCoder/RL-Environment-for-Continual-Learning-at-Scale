@@ -17,6 +17,7 @@ import os
 import time
 import contextlib
 import re
+import ast as _ast
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional
 
@@ -122,9 +123,22 @@ class TrainingEngine:
         self.registry = AdapterRegistry(adapter_root or os.path.join(cfg.out_dir, "adapters"))
         self._fisher: Optional[Dict[str, torch.Tensor]] = None
         self._anchor: Optional[Dict[str, torch.Tensor]] = None
+        self._lora_base: Optional[Dict[str, torch.Tensor]] = None  # frozen LoRA init = "no adapter"
         self._replay: List[Dict[str, str]] = []
         self.updates_done = 0
+        self._update_idx = 0
         self.gate_log: List[Dict[str, Any]] = []
+
+    # ---- base anchor (vsr_bounded): first-call snapshot of LoRA init ---------
+    def _base_anchor(self) -> Dict[str, torch.Tensor]:
+        """Snapshot of the LoRA adapter as initialized (i.e. 'no skill yet'). On the
+        vsr_bounded path, every update is pulled toward this. Implements the base-model
+        anchor cheaply: LoRA init is mathematically equivalent to the frozen base."""
+        if self._lora_base is None:
+            from peft import get_peft_model_state_dict
+            self._lora_base = {k: v.detach().clone() for k, v in
+                               get_peft_model_state_dict(self.model).items()}
+        return self._lora_base
 
     # ---- snapshots (zero copy) ----
     def _snapshot(self):
@@ -154,30 +168,39 @@ class TrainingEngine:
             n += 1
         return tot / max(1, n)
 
-    # ---- REAL update (with optional EWC + Replay). No gate here (see env). ----
+    # ---- REAL update (with optional EWC + Replay + Base Anchor). No gate here (see env). ----
     def apply_update(self, pairs: List[Dict[str, str]], ewc_lambda: float = 0.0,
                      replay_frac: float = 0.0, steps: Optional[int] = None,
-                     lr: Optional[float] = None) -> Dict[str, Any]:
+                     lr: Optional[float] = None,
+                     anchor_lambda: float = 0.0, replay_pairs: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         assert pairs, "apply_update needs data"
         steps = steps or self.cfg.train_steps_per_update
+        base_seed = len(pairs)
+        # Optional caller-provided replay buffer (used by the vault/replay merge in env).
+        if replay_pairs is None:
+            replay_pairs = self._replay
+        eff_pairs = list(pairs)
+        k = 0
+        if replay_frac > 0 and replay_pairs:
+            k = max(1, int(len(replay_pairs) * replay_frac))
+            eff_pairs = eff_pairs + replay_pairs[-k:]
+        # Multiple distinct tasks in a batch mean a single gradient step can't overfit ONE.
         params = [p for p in self.model.parameters() if p.requires_grad]
         opt = torch.optim.AdamW(params, lr=lr or self.cfg.learning_rate)
-        eff_pairs = list(pairs)
-        # Replay must NOT drown out fresh evidence: min 1 fresh example per replay batch
-        self._replay_reserve = 1
-        base_seed = len(pairs)
-        eff_pairs = list(pairs)
-        if replay_frac > 0 and self._replay:
-            k = max(1, int(len(self._replay) * replay_frac))
-            eff_pairs = eff_pairs[:base_seed] + self._replay[-k:]
-        else:
-            k = 0
+
+        # Optional base-anchor (vsr_bounded). Precompute the frozen base once.
+        base_anchor = self._base_anchor() if anchor_lambda > 0 else None
+
         losses, last_gn = [], 0.0
         self.model.train()
-        # Save Fisher only when consolidating → cheap online path
-        # (single flattened anchor copy for snapshots in gated_update)
         for _ in range(steps):
             loss = self._loss_on_batch(eff_pairs)
+            if anchor_lambda > 0 and base_anchor is not None:
+                anch_pen = 0.0
+                for n, p in self.model.named_parameters():
+                    if p.requires_grad and n in base_anchor:
+                        anch_pen = anch_pen + (p - base_anchor[n]).pow(2).sum()
+                loss = loss + 0.5 * anchor_lambda * anch_pen
             if ewc_lambda > 0 and self._fisher is not None and self._anchor is not None:
                 pen = 0.0
                 for n, p in self.model.named_parameters():
@@ -189,12 +212,21 @@ class TrainingEngine:
             opt.step(); opt.zero_grad()
             losses.append(float(loss.detach()))
         self.updates_done += 1
+        self._update_idx += 1
         for pr in pairs:
             self._replay.append(pr)
         if len(self._replay) > 1024:
             self._replay = self._replay[-1024:]
         return {"loss_start": losses[0], "loss_end": losses[-1], "grad_norm": last_gn,
-                "n_pairs": len(eff_pairs), "steps": steps, "ewc_lambda": ewc_lambda}
+                "n_pairs": len(eff_pairs), "replay_used": k, "steps": steps,
+                "ewc_lambda": ewc_lambda, "anchor_lambda": anchor_lambda}
+
+    # ---- bounded update step: LR decays with depth to stop endless drift ------
+    def bounded_lr(self, base_lr: Optional[float] = None) -> float:
+        b = base_lr or self.cfg.learning_rate
+        depth = max(1, self._update_idx + 1)
+        depth = min(depth, 20.0)
+        return b / (1.0 + 0.05 * (depth - 1))
 
     def consolidate_ewc(self, pairs: List[Dict[str, str]]) -> Dict[str, Any]:
         fisher, anchor = {}, {}
@@ -246,6 +278,45 @@ class TrainingEngine:
                 txt = txt.split(tag, 1)[1] if tag == "</think>" else txt.split(tag, 1)[0]
         return txt.strip()
 
+    @torch.no_grad()
+    def sample_candidates(self, prompt: str, n: int, temperature: float = 0.7,
+                          top_p: float = 0.95, adapter_on: bool = True,
+                          max_new_tokens: Optional[int] = None) -> List[str]:
+        """Batched multi-sample generation for self-taught (STaR) rollouts.
+
+        One forward pass per *batch* of n candidates (pads to equal length), so
+        temperature>0 yields `n` distinct code completions cheaply. Used by the
+        no-gold learner to find a verifier-confirmed solution pass@K instead of
+        giving up after a single greedy sample.
+        """
+        self.model.eval()
+        if n <= 1:
+            return [self.generate(prompt, adapter_on=adapter_on, greedy=(temperature <= 0))]
+        rendered = self._apply_chat(prompt)
+        enc = self.tokenizer(rendered, return_tensors="pt")
+        ids = enc.input_ids.to(self.device)
+        attn = enc.attention_mask.to(self.device)
+        ntok = int(attn.sum().item())
+        ids = ids.repeat(n, 1)
+        ctx = contextlib.nullcontext() if adapter_on else self.model.disable_adapter()
+        with ctx:
+            out = self.model.generate(
+                ids, max_new_tokens=max_new_tokens or self.cfg.max_new_tokens,
+                do_sample=(temperature > 0), temperature=max(temperature, 1e-4) if temperature > 0 else 1.0,
+                top_p=top_p if temperature > 0 else 1.0,
+                pad_token_id=self.tokenizer.pad_token_id)
+        outs = []
+        for row in out:
+            outs.append(self.tokenizer.decode(row[ntok:], skip_special_tokens=True))
+        # strip thinking preambles
+        cleaned = []
+        for txt in outs:
+            for tag in ("</think>",):
+                if tag in txt:
+                    txt = txt.split(tag, 1)[1]
+            cleaned.append(txt.strip())
+        return cleaned
+
     # ---- holdout score under base (adapter off) or current adapter ----
     @torch.no_grad()
     def holdout_score(self, holdout: List[Task], verifier, adapter_on: bool) -> float:
@@ -284,30 +355,43 @@ def _build_prompt(task: Task) -> str:
 
 
 def extract_code(text: str) -> str:
-    """Executable-code extractor robust to base-model noise (stubs / think blocks).
+    """Executable-code extractor robust to base-model noise.
 
-    Strategy: collect every ```python ...``` block, preferring a *real* function
-    body over one-line stubs, and ignoring <think> chatter. Falls back to the last
-    plausible `def`-block if no fenced code exists. Returns cleaned, compilable code.
+    Collect every ```...``` block (language tag optional, not requiring a newline
+    right after the fence), prefer a *real* function body over a stub, ignore
+    <think> chatter. Fallback: last standalone `def` run from raw text. Always
+    returns fence-stripped, compilable code.
     """
-    import re
-    text = text or ""
-    # 1) gather all fenced python blocks (skip empty / whitespace)
-    blocks = [m.strip() for m in re.findall(r"```(?:python)?\n(.+?)```", text, flags=re.DOTALL)]
-    blocks = [b for b in blocks if b.strip()]
+    text = (text or "")
+    def _strip_fence(block: str) -> str:
+        b = block.strip()
+        # drop a leading language marker line like ```python or ```python (no newline)
+        b = re.sub(r"^```(?:python)?\s*\n?", "", b, count=1)
+        b = re.sub(r"\s*```$", "", b, count=1)  # trailing fence residue
+        return b.strip()
+
+    # match ```optional-lang [possibly same line]``` both with and without trailing NL
+    blocks = []
+    for m in re.finditer(r"```(?:[Pp]ython)?\s*\n?(.*?)```", text, flags=re.DOTALL):
+        cand = _strip_fence(m.group(1))
+        if cand.strip():
+            blocks.append(cand)
 
     def _score(b: str) -> int:
         has_def = "def " in b
-        stub = re.sub(r"#.*", "", b).strip()
-        is_stub = bool(re.match(r"^def\s+\w+\s*\(.*\):\s*(pass|\.\.\.)\s*$", stub))
+        body = re.sub(r"#.*", "", b).strip()
+        is_stub = bool(re.match(r"^def\s+\w+\s*\(.*\):\s*(pass|\.\.\.)\s*$", body))
         return (2 if (has_def and not is_stub) else (1 if has_def else 0))
 
     if blocks:
         best = max(blocks, key=_score)
         if _score(best) > 0:
-            return best.strip()
-    # 2) fallback: last `def`-block from raw text (handles no fences)
+            return best
+    # fallback: last def-block (fence-free segment)
     matches = list(re.finditer(r"(?m)^(\s*def\s+\w+\s*\(.*)$", text))
     if matches:
-        return text[matches[-1].start():].strip()
-    return text.strip()
+        tail = text[matches[-1].start():]
+        tail = re.split(r"\n\s*```", tail, maxsplit=1)[0]  # stop at a trailing fence
+        return tail.strip()
+    # no compilable code found (think/prose only) — return empty so verifier scores 0
+    return ""

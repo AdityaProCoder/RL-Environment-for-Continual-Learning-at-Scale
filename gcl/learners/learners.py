@@ -156,6 +156,34 @@ class VSRLearner(ContinualLearner):
         return LearnOp.UPDATE_LORA  # corrective/gold-driven updates also flow through UPDATE
 
 
+class VSRSelfLearner(VSRLearner):
+    """True no-gold continual learner: learns ONLY from execution-reward feedback.
+
+    Unlike `vsr`/`vsr_bounded` (gold reference injected as target), this learner never
+    sees gold. It proposes its own answer; the vault stores it only when the sandbox
+    confirms full pass (`reward >= vault_commit_min`). The gated update then applies a
+    bounded LoRA update anchored to the base model — so the skill library grows purely
+    from correct self-training (STaR-style self-taught), not reference copying.
+    """
+    name = "vsr_self"
+    def act_prompt(self, obs):
+        # self-taught: act prompts are handled by env.build_prompt if grounded, but
+        # the rollout is multi-sample and happens in experiment.py per step.
+        return super().act_prompt(obs)
+    def decide(self, obs, reward, success):
+        # Always request an update: the env will execute only if a verified self-solve
+        # exists (via pass@K + self-repair). Storage is implicit in the vault commit.
+        return LearnOp.UPDATE_LORA
+
+
+class VSRBoundedLearner(VSRLearner):
+    """VSR + anti-collapse stabilizers. Same decide() logic as VSR, but config activates
+    anchor_lambda (base pull), replay_frac (no single-task overfit), lr_decay, and
+    vault dedup. This is the paper learner: verified skill regeneration that actually
+    generalizes instead of degrading the frozen backbone."""
+    name = "vsr_bounded"
+
+
 class GRPOLearner(ContinualLearner):
     """RL fine-tuning of the LoRA adapter using group-relative verified rewards.
 
@@ -182,6 +210,9 @@ class GRPOLearner(ContinualLearner):
         return LearnOp.UPDATE_LORA if (reward or obs.perf.get("recent_mean",0)) >= 0.5 else LearnOp.STORE
 
 
+# alias so ablation scripts can refer to "vsr_nogold" explicitly
+VSRNoGold = VSRSelfLearner
 LEARNERS = {c.name: c for c in (FrozenLearner, AlwaysLoRALearner, AlwaysLoRARefLearner,
                                  ReplayLearner, EWCLearner, ControllerLearner,
-                                 VSRLearner, GRPOLearner)}
+                                 VSRLearner, VSRBoundedLearner, VSRSelfLearner, GRPOLearner)}
+LEARNERS["vsr_nogold"] = VSRNoGold

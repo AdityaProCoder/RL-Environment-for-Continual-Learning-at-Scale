@@ -120,8 +120,17 @@ class SkillVault:
         return float(_np.dot(a, b))
 
     # ---- admission: only execution-verified skills enter the library -------
+    def _too_similar_exists(self, task: Any, min_sim: float = 0.995) -> bool:
+        if len(self._skills) < 1:
+            return False
+        q = self._embed(getattr(task, "prompt", ""))
+        if q is None:
+            return False
+        return any(self._cosine(s.emb, q) >= min_sim for s in self._skills)
+
     def commit(self, task: Any, code: str, reward: float, domain: str = "code",
-               min_reward: float = 0.9, pass_rate: float = 1.0) -> bool:
+               min_reward: float = 0.9, pass_rate: float = 1.0,
+               dedup_sim: float = 0.0) -> bool:
         if domain != "code":
             return False
         if reward < min_reward:
@@ -130,6 +139,9 @@ class SkillVault:
             return False
         code = (code or "").strip()
         if not code:
+            return False
+        # dedup: if the same skill is already stored, skip (avoid entrenchment of one)
+        if dedup_sim > 0.0 and self._too_similar_exists(task, min_sim=dedup_sim):
             return False
         import time
         s = _Skill(task_id=getattr(task, "task_id", ""), family=getattr(task, "family", ""),
@@ -140,6 +152,14 @@ class SkillVault:
         self._skills.append(s); self._embs.append(s.emb)
         self._save()
         return True
+
+    def to_pairs(self) -> List[Dict[str, str]]:
+        """Export verified skills as training pairs with context-grounded targets."""
+        out = []
+        for s in self._skills:
+            if s.code:
+                out.append({"prompt": f"{s.prompt}\n```python\n", "target": s.code})
+        return out
 
     # ---- retrieval: in-context grounding / forward transfer -----------------
     def retrieve(self, prompt: str, k: int = 3) -> List[_Skill]:

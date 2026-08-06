@@ -30,6 +30,13 @@ from .verify import Verifier
 from .sandbox import PythonSandbox
 
 
+class _FamilyProxy:
+    """Duck-typed Family wrapper so held-out tasks can be passed to _eval_family."""
+    def __init__(self, name, tasks):
+        self.name = name
+        self.tasks = tasks
+
+
 def _task_reference_for_obs(env, obs) -> str:
     """Gold reference for the task the env is ABOUT to step (pre-step mirror).
     This is metadata only (never in the prompt) so VSR can correct toward it."""
@@ -85,6 +92,7 @@ def run_experiment(cfg: ExperimentConfig, learner_names: List[str],
         if name not in LEARNERS:
             continue
         print(f"\n[GCL] === Starting Learner {idx + 1}/{len(learner_names)}: {name} ===", flush=True)
+        cfg._learner_name = name  # also enable bounded-update knobs scoped to this learner
         engine = TrainingEngine(cfg, adapter_root=os.path.join(out_dir, f"adapters_{name}"))
         verifier = Verifier(sandbox=PythonSandbox())
         learner = LEARNERS[name](cfg)
@@ -134,11 +142,32 @@ def run_experiment(cfg: ExperimentConfig, learner_names: List[str],
                 # VSR: retrieval-grounded generation (forward transfer). Controls:
                 # unchanged learner prompt. Gold reference is metadata only.
                 prompt = env.build_prompt() if vault is not None else learner.act_prompt(obs)
-                gold_ref = _task_reference_for_obs(env, obs)
-                raw = engine.generate(prompt, adapter_on=True)
+                # Self-taught (no-gold) learners run pass@K + self-repair instead of a
+                # single generation; they learn only from execution reward.
+                is_self_taught = name in set(getattr(cfg, "self_taught_learners", ["vsr_nogold", "vsr_self"]))
+                if is_self_taught:
+                    from .selftaught import self_taught_solve
+                    st = self_taught_solve(engine, verifier, env._task(),
+                                           k_samples=getattr(cfg, "self_taught_k", 4),
+                                           temp=getattr(cfg, "self_taught_temp", 0.7),
+                                           repair_rounds=getattr(cfg, "self_taught_repair_rounds", 1),
+                                           repair_k=getattr(cfg, "self_taught_repair_k", 2),
+                                           commit_min=getattr(cfg, "vault_commit_min", 0.9))
+                    # Feed the verified best self-solution as the env action; env.step
+                    # will verify it and decide whether to gated-update.
+                    raw = st["code"] if st["found"] else (st["code"] or "")
+                    # when nothing was found, still step with empty answer to signal failure
+                    if not raw.strip():
+                        raw = ""
+                    gold_ref = ""
+                else:
+                    raw = engine.generate(prompt, adapter_on=True)
+                    gold_ref = _task_reference_for_obs(env, obs)
                 op = learner.decide(obs, None, False)
                 obs2, reward, done, info = env.step(Action(
-                    answer=raw, learn_op=op, metadata={"reference_answer": gold_ref}))
+                    answer=raw, learn_op=op,
+                    metadata={"reference_answer": gold_ref, "vault_enabled": bool(vault is not None),
+                              "self_taught": {"found": (st["found"] if is_self_taught else None)}}))
                 if isinstance(learner, ControllerLearner):
                     learner.learn(reward)
                 rewards.append(reward)
@@ -174,17 +203,20 @@ def run_experiment(cfg: ExperimentConfig, learner_names: List[str],
         if fam_rewards:
             fam_curve.append(sum(fam_rewards) / max(1, len(fam_rewards)))
 
-        # 3) final eval (adapter as it ended)
-        print(f"[GCL] [{name}] Stream complete! Evaluating final accuracy across all families...", flush=True)
-        final = [_eval_family(engine, verifier, fam, adapter_on=True) for fam in families]
+        # 3) final eval — HELD-OUT (never shown during the stream) so accuracy reflects
+        # retained general competence, not memorization of the training tasks.
+        print(f"[GCL] [{name}] Stream complete! Evaluating final accuracy across all families (HELD-OUT + trained)...", flush=True)
+        final_trained = [_eval_family(engine, verifier, fam, adapter_on=True) for fam in families]
+        final_heldout = [_eval_family(engine, verifier, _FamilyProxy(f.name, f.holdout), adapter_on=True)
+                          if getattr(f, "holdout", None) else 0.0 for f in families]
         R = [[0.0] * nF for _ in range(2)]
-        R[0] = list(zero_shot)          # before any learning
-        R[1] = list(final)              # after the whole stream
+        R[0] = list(zero_shot)          # before any learning (trained tasks)
+        R[1] = list(final_trained)      # after the whole stream (trained)
 
-        acc = acc_from_matrix([final])  # final average over families
-        per_family_drop = [max(0.0, zero_shot[j] - final[j]) for j in range(nF)]
+        acc = acc_from_matrix([final_heldout])  # <<< held-out generalization, the headline metric
+        per_family_drop = [max(0.0, zero_shot[j] - final_heldout[j]) for j in range(nF)]
         forgetting = sum(per_family_drop) / len(per_family_drop)
-        bwt = sum(final[j] - zero_shot[j] for j in range(nF)) / nF
+        bwt = sum(final_heldout[j] - zero_shot[j] for j in range(nF)) / nF
         rep = build_report(name, R, zero_shot, fam_curve, rewards, updates, cfg.max_updates)
         rep.acc = acc
         rep.bwt = bwt
@@ -196,7 +228,8 @@ def run_experiment(cfg: ExperimentConfig, learner_names: List[str],
         recall_rate = (recall_hits / max(1, recall_probe_total)) if recall_probe_total else 0.0
         print(f"[GCL] [{name}] Finished in {round(time.time() - t0, 1)}s -> ACC: {acc:.3f} | BWT: {bwt:+.3f} | Forgetting: {forgetting:.3f} | Frontier: {frontier:+.4f} | Recall: {recall_rate:.3f}\n", flush=True)
         reports["learners"][name] = {
-            "report": rep.to_dict(), "R_pairs": {"zero_shot": zero_shot, "first_contact": first_contact, "final": final},
+            "report": rep.to_dict(), "R_pairs": {"zero_shot": zero_shot, "first_contact": first_contact, "final": final_heldout,
+                                                    "final_trained": final_trained},
             "family_curve": fam_curve, "updates": updates, "rollbacks": rollbacks,
             "wallclock_s": round(time.time() - t0, 1), "trajectories": trajs_path,
             "frontier_score": round(frontier, 4),

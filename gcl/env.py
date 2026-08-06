@@ -17,24 +17,39 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 try:
     from .engine import extract_code, _build_prompt
 except Exception:  # torch absent (e.g. headless test env)
+    import re  # needed by fallback regexes below
     def extract_code(text: str) -> str:
-        import re
-        text = text or ""
-        blocks = [m.strip() for m in re.findall(r"```(?:python)?\n(.+?)```", text, flags=re.DOTALL)]
-        blocks = [b for b in blocks if b.strip()]
+        text = (text or "")
+        def _strip_fence(block: str) -> str:
+            b = block.strip()
+            b = re.sub(r"^```(?:python)?\s*\n?", "", b, count=1)
+            b = re.sub(r"\s*```$", "", b, count=1)
+            return b.strip()
+        blocks = []
+        for m in re.finditer(r"```(?:[Pp]ython)?\s*\n?(.*?)```", text, flags=re.DOTALL):
+            cand = _strip_fence(m.group(1))
+            if cand.strip():
+                blocks.append(cand)
         def _score(b: str) -> int:
             has_def = "def " in b
-            stub = re.sub(r"#.*", "", b).strip()
-            is_stub = bool(re.match(r"^def\s+\w+\s*\(.*\):\s*(pass|\.\.\.)\s*$", stub))
+            body = re.sub(r"#.*", "", b).strip()
+            is_stub = bool(re.match(r"^def\s+\w+\s*\(.*\):\s*(pass|\.\.\.)\s*$", body))
             return (2 if (has_def and not is_stub) else (1 if has_def else 0))
         if blocks:
             best = max(blocks, key=_score)
             if _score(best) > 0:
-                return best.strip()
+                return best
         matches = list(re.finditer(r"(?m)^(\s*def\s+\w+\s*\(.*)$", text))
         if matches:
-            return text[matches[-1].start():].strip()
-        return text.strip()
+            tail = text[matches[-1].start():]
+            tail = re.split(r"\n\s*```", tail, maxsplit=1)[0]
+            return tail.strip()
+        # no compilable code anywhere (think-only / prose) — return empty so the
+        # verifier treats it as a non-answer instead of a SyntaxError
+        return ""  # engine real path
+
+
+# ====[ /fallback cluster ]====
 
     def _build_prompt(task) -> str:
         if getattr(task, "domain", "code") == "math":
@@ -57,7 +72,7 @@ def _ground_prompt(base_prompt: str, retrieved) -> str:
         return base_prompt
     shots = []
     for t in retrieved:
-        code = (t.generated_code or "").strip()
+        code = (getattr(t, "code", None) or getattr(t, "generated_code", None) or "").strip()
         if code:
             shots.append(f"# Example solution (verified):\n```python\n{code}\n```")
     if not shots:
@@ -133,8 +148,24 @@ class GroundedContinualEnv:
         self._use_reference_injection = bool(vault is not None)
         self._use_vsr_gate = (bool(getattr(config, "use_vsr_gate", False)) if vsr_gate is None
                               else bool(vsr_gate)) and vault is not None
+        self._lr_decay = bool(getattr(config, "use_lr_decay", False))
+        self._anchor_lambda = float(getattr(config, "anchor_lambda", 0.0))
+        self._replay_frac = float(getattr(config, "replay_frac", 0.0))
+        self._dedup_enabled = bool(getattr(config, "use_vault_dedup", False))
+        self._dedup_sim = float(getattr(config, "vault_dedup_sim", 0.95))
         self.last_retrieved: List = []  # set per-step for recall measurement
         self.reset()
+
+    def _obs(self) -> Observation:
+        task = self._task()
+        return Observation(task_id=task.task_id, family=task.family, domain=task.domain,
+                           prompt=task.prompt, step=self.t,
+                           mem_stats={"replay": len(getattr(self.engine, "_replay", [])),
+                                      "vault": len(self.vault) if self.vault else 0,
+                                      "adapter_version": self.engine.registry.active_version,
+                                      "rollbacks": self.rollback_count},
+                           perf={"recent_mean": (sum(self.rewards[-8:]) / min(8, len(self.rewards))) if self.rewards else 0.0,
+                                 "updates": self.update_count})
 
     def build_prompt(self) -> str:
         """VSR-conditioned prompt: prior verified skills as in-context grounding when
@@ -212,7 +243,12 @@ class GroundedContinualEnv:
             cand_before = eng.holdout_score(self.holdout, self.verifier, adapter_on=True) if self.holdout else base_score
             gate.update({"base_score": base_score, "cand_before": cand_before})
 
-        m = eng.apply_update(pairs)
+        lr = eng.bounded_lr() if self._lr_decay else None
+        anch = self._anchor_lambda if (self._anchor_lambda > 0) else 0.0
+        rf = self._replay_frac if (self._replay_frac > 0) else 0.0
+        rp = self.vault.to_pairs()[:int(max(1, len(self.vault._skills) * rf))] if (rf > 0 and self.vault is not None) else None
+        m = eng.apply_update(pairs, lr=lr, anchor_lambda=anch, replay_frac=rf,
+                             replay_pairs=rp)
 
         if use_vsr:
             veto = self.vault.violates(task, candidate_code, self.verifier,
@@ -259,8 +295,14 @@ class GroundedContinualEnv:
 
         # Gold reference may also be supplied at act-time via metadata for the
         # reference-injection / ablation paths; NEVER enters the model prompt.
-        gold_from_meta = (action.metadata or {}).get("reference_answer", "")
-        gold_available = task.reference_answer or gold_from_meta
+        # For self-taught (no-gold) learners, task.reference_answer must be ignored.
+        self_taught = getattr(self.cfg, "_learner_name", "") in set(
+            getattr(self.cfg, "self_taught_learners", ["vsr_nogold", "vsr_self"]))
+        if self_taught:
+            gold_available = ""
+        else:
+            gold_from_meta = (action.metadata or {}).get("reference_answer", "")
+            gold_available = task.reference_answer or gold_from_meta
 
         # ---- VSR: retrieve verified skills for grounding (measured for FWT) ----
         retrieved: List = []
@@ -282,7 +324,11 @@ class GroundedContinualEnv:
             target_source = cand.source
             target_verified = cand.verified
             recall_hit = cand.source == "verified_skill"
-            trainable = target_verified  # only train on something proven to pass
+            # self = model already correct; gold/verified_skill = provable correct.
+            # For nogold (vault empty), target_code=model output when verified==True.
+            # If no verified target exists, we still train ALLOWEDLY when correction
+            # is possible (vault.retrieve found a passing skill for this family).
+            trainable = target_verified or (cand.source == "verified_skill")
         else:
             target_code = extracted
             target_source = "self"
@@ -329,7 +375,8 @@ class GroundedContinualEnv:
         if use_vsr and passed:
             self.vault.commit(task, extracted, reward, domain=task.domain,
                               min_reward=self.cfg.vault_commit_min,
-                              pass_rate=float(info.get("pass_rate", 0.0)))
+                              pass_rate=float(info.get("pass_rate", 0.0)),
+                              dedup_sim=self._dedup_sim if self._dedup_enabled else 0.0)
 
         traj = Trajectory(traj_id=f"t{self.t}_{task.task_id}", task_id=task.task_id,
                           family=task.family, prompt=task.prompt, answer=action.answer,

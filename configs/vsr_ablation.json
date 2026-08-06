@@ -1,0 +1,99 @@
+{
+  "_comment": "VSR ablation on Qwen3.5-2B: frozen / vsr / vsr_nogold / vsr_bounded with held-out evaluation.",
+  "stream": {
+    "seed": 42,
+    "families": [
+      {
+        "corpus": "mbpp",
+        "name": "A_basic",
+        "n_train": 12,
+        "n_holdout": 4,
+        "offset": 0
+      },
+      {
+        "corpus": "math",
+        "name": "B_math",
+        "n_train": 8,
+        "n_holdout": 4,
+        "offset": 0
+      },
+      {
+        "corpus": "mbpp",
+        "name": "C_string",
+        "n_train": 12,
+        "n_holdout": 4,
+        "offset": 20
+      },
+      {
+        "corpus": "mbpp",
+        "name": "D_per",
+        "n_train": 12,
+        "n_holdout": 4,
+        "offset": 36,
+        "drift": {
+          "kind": "spec_perturb"
+        }
+      }
+    ]
+  },
+  "experiment": {
+    "model_name": "Qwen/Qwen3.5-2B",
+    "device": "cuda",
+    "dtype": "bfloat16",
+    "lora_r": 16,
+    "lora_alpha": 32,
+    "lora_dropout": 0.05,
+    "learning_rate": 0.00035,
+    "train_steps_per_update": 3,
+    "max_updates": 40,
+    "temperature": 0.3,
+    "top_p": 0.9,
+    "max_new_tokens": 256,
+    "max_seq_len": 512,
+    "gate_epsilon": 0.05,
+    "holdout_size": 12,
+    "use_reference_injection": true,
+    "use_vsr_gate": true,
+    "vsr_learners": [
+      "vsr",
+      "vsr_nogold",
+      "vsr_bounded"
+    ],
+    "refinject_learners": [
+      "vsr",
+      "vsr_bounded"
+    ],
+    "vault_commit_min": 0.9,
+    "vault_retrieve_k": 3,
+    "vault_gate_check": 3,
+    "anchor_lambda": 0.5,
+    "anchor_learners": [
+      "vsr_nogold",
+      "vsr_bounded"
+    ],
+    "replay_frac": 0.5,
+    "replay_frac_learners": [
+      "vsr",
+      "vsr_nogold",
+      "vsr_bounded"
+    ],
+    "lr_decay": true,
+    "vault_dedup_sim": 0.995,
+    "vault_dedup_learners": [
+      "vsr",
+      "vsr_nogold",
+      "vsr_bounded"
+    ],
+    "episodes_per_task": 1,
+    "max_attempts_per_task": 1,
+    "out_dir": "runs/vsr_ablation",
+    "seed": 42
+  },
+  "learners": [
+    "frozen",
+    "vsr",
+    "vsr_nogold",
+    "vsr_bounded"
+  ],
+  "out_dir": "runs/vsr_ablation"
+}

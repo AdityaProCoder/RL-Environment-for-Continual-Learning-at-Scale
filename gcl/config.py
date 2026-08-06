@@ -40,8 +40,23 @@ class ExperimentConfig:
     refinject_learners: List[str] = field(default_factory=lambda: ["vsr"])  # which get gold/reference injection
     vault_commit_min: float = 0.9       # min reward to ADMIT a skill to the vault
     vault_retrieve_k: int = 3           # skills injected as in-context grounding per step
-    vault_recall_min_sim: float = 0.0   # (reserved) retrieval similarity floor
     vault_gate_check: int = 3           # verified skills re-checked on every gated update
+
+    # ---- bounded VSR (anti-collapse) -----------------------------------------
+    anchor_lambda: float = 0.0          # EWC-lite base pull on LoRA toward init (vsr_bounded > 0)
+    anchor_learners: List[str] = field(default_factory=list)  # learners that get bounded updates
+    replay_frac: float = 0.0            # fraction of replay buffer to mix per update (>0 => anti-overfit)
+    replay_frac_learners: List[str] = field(default_factory=list)  # learners that get replay mixing
+    lr_decay: bool = False              # if True, use bounded_lr() (decays with update count)
+    vault_dedup_sim: float = 0.995      # above this similarity -> skip re-commit (dedup same skill)
+    vault_dedup_learners: List[str] = field(default_factory=list)
+
+    # ---- Self-taught (no-gold) rollout ----
+    self_taught_learners: List[str] = field(default_factory=lambda: ["vsr_nogold", "vsr_self"])
+    self_taught_k: int = 4              # initial diverse samples per task
+    self_taught_temp: float = 0.7       # sampling temperature for diversity
+    self_taught_repair_rounds: int = 1  # in-context repair rounds on failure
+    self_taught_repair_k: int = 2       # candidates per repair round (greedy-ish)
     # output
     out_dir: str = "runs/run"
     seed: int = 42
