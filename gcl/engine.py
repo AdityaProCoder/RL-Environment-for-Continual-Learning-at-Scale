@@ -105,6 +105,7 @@ class TrainingEngine:
 
         model_config = AutoConfig.from_pretrained(cfg.model_name, trust_remote_code=True)
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_name, trust_remote_code=True)
+        self.tokenizer.padding_side = "left"
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         dtype = getattr(torch, cfg.dtype, torch.bfloat16) if self.device == "cuda" else torch.float32
@@ -277,6 +278,34 @@ class TrainingEngine:
             if tag in txt:
                 txt = txt.split(tag, 1)[1] if tag == "</think>" else txt.split(tag, 1)[0]
         return txt.strip()
+
+    @torch.no_grad()
+    def generate_batch(self, prompts: List[str], adapter_on: bool = True, greedy: bool = True) -> List[str]:
+        self.model.eval()
+        orig_side = self.tokenizer.padding_side
+        self.tokenizer.padding_side = "left"
+        rendered = [self._apply_chat(p) for p in prompts]
+        enc = self.tokenizer(rendered, return_tensors="pt", padding=True)
+        ids = enc.input_ids.to(self.device)
+        attn = enc.attention_mask.to(self.device)
+        ctx = contextlib.nullcontext() if adapter_on else self.model.disable_adapter()
+        with ctx:
+            do_sample = (self.cfg.temperature > 0) and not greedy
+            kw = dict(max_new_tokens=self.cfg.max_new_tokens, do_sample=do_sample,
+                      pad_token_id=self.tokenizer.pad_token_id)
+            if do_sample:
+                kw["temperature"] = max(self.cfg.temperature, 1e-4)
+                kw["top_p"] = self.cfg.top_p
+            out = self.model.generate(ids, attention_mask=attn, **kw)
+        self.tokenizer.padding_side = orig_side
+        results = []
+        for i, row in enumerate(out):
+            txt = self.tokenizer.decode(row[enc.input_ids.shape[1]:], skip_special_tokens=True)
+            for tag in ("</think>", "<|im_end|>"):
+                if tag in txt:
+                    txt = txt.split(tag, 1)[1] if tag == "</think>" else txt.split(tag, 1)[0]
+            results.append(txt.strip())
+        return results
 
     @torch.no_grad()
     def sample_candidates(self, prompt: str, n: int, temperature: float = 0.7,

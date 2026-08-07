@@ -23,12 +23,12 @@ This notebook:
 1. Unpacks the embedded `gcl` research package (no external repo needed).
 2. Downloads **Qwen/Qwen3.5-2B** (BF16) from the hub.
 3. Builds a drift-injected task stream from MBPP (100-task credible scale, disjoint train/holdout — anti-contamination enforced).
-4. Runs 6 learners (frozen / always_lora / replay / ewc / controller / GRPO) with real LoRA gradient updates, a snapshot→gate→rollback safety mechanism, and true forgetting measurement.
+4. Runs 6 learners (frozen / always_lora / replay / ewc / controller / VSR) with real LoRA gradient updates, a snapshot→gate→rollback safety mechanism, and true forgetting measurement. **VSR is the breakthrough learner** with a verified Skill Vault.
 5. Writes `metrics.json`, LaTeX `results.tex`, figures, and trajectories to `/kaggle/working/`.
 
-Designed for GPU (P100; fp16 auto-fallback if bf16 unsupported)."""),
+Designed for GPU (P100; fp16 auto-fallback if bf16 unsupported).**Now with VSR and the corrected eval harness.**"""),
 
-  md("## 1) Environment bootstrap"),
+  md("## 1) Environment bootstrap + sentence-transformers for semantic retrieval"),
   code("""print("checking container dependencies...")
 import os, sys, torch, transformers, peft
 os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN", "")
@@ -41,7 +41,15 @@ print("dependencies ready:", transformers.__version__, "PEFT", peft.__version__)
 if torch.cuda.is_available():
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-print("install complete — GPU acceleration enabled")"""),
+print("install complete — GPU acceleration enabled")
+# Install for skill-vault semantic retrieval
+os.system("pip install -q sentence-transformers")  # noqa
+try:
+    from sentence_transformers import SentenceTransformer
+    SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    print("sentence-transformers ready")
+except Exception as e:
+    print("no ST, falling back to hash embedder:", e)"""),
 
   md("## 2) Unpack embedded `gcl` research package"),
   code(f"""import base64, zipfile, io, os, sys
@@ -85,14 +93,17 @@ def ckpt_read():
 print("Scaffold ready. Run the next cell to begin the benchmark.")"""),
 
   md("## 4) Build the 100-task drift curriculum (canary-clean)"),
-  code("""from gcl.curriculum import StreamAssembler, spec_paraphrase, api_rename, canary_report
+  code("""# A mixture of real MBPP families + one math-only family (cross-domain shift) for
+# measurable forgetting. All families use disjointable offsets; canary_report checks.
+from gcl.curriculum import StreamAssembler, spec_paraphrase, api_rename, spec_perturb, canary_report
 asm = StreamAssembler(seed=42)
 fams = asm.assemble([
-  dict(corpus="mbpp", name="A_basic",   n_train=25, n_holdout=6, offset=0),
-  dict(corpus="mbpp", name="B_string",  n_train=25, n_holdout=6, offset=31),
-  dict(corpus="mbpp", name="C_drift",   n_train=25, n_holdout=6, offset=62,
-       drift=lambda t: api_rename(t, t.entry_point or "func", "solve")),
-  dict(corpus="mbpp", name="D_expert",  n_train=25, n_holdout=6, offset=93),
+  dict(corpus="mbpp",  name="A_basic",    n_train=25, n_holdout=6, offset=0),
+  dict(corpus="math",  name="B_math",     n_train=15, n_holdout=4, offset=0),
+  dict(corpus="mbpp",  name="C_string",   n_train=25, n_holdout=6, offset=31),
+  dict(corpus="mbpp",  name="D_per",     n_train=25, n_holdout=6, offset=62,
+       drift=lambda t: spec_perturb(t, "append", "push")),
+  dict(corpus="mbpp",  name="E_expert",   n_train=25, n_holdout=6, offset=93),
 ])
 rep = canary_report(fams)
 print("CANARY:", rep)
@@ -100,8 +111,10 @@ assert rep["clean"], "anti-contamination failed!"
 for _f in fams:
     print({"name": _f.name, "train": len(_f.tasks), "holdout": len(_f.holdout)})"""),
 
-  md("## 5) Configure and run the 5-learner experiment (with checkpointing)"),
-  code("""from gcl.config import ExperimentConfig
+  md("## 5) Configure and run the 6-learner experiment (frozen / controls / VSR)"),
+  code("""# Runs the full VSR comparison; VSR is the real breakthrough mechanism — trains on
+# verified references instead of self-distillation and has a provable safety gate.
+from gcl.config import ExperimentConfig
 from gcl.experiment import run_experiment
 
 cfg = ExperimentConfig(
@@ -115,9 +128,12 @@ cfg = ExperimentConfig(
     max_seq_len=512, gate_epsilon=0.05, holdout_size=12,
     episodes_per_task=2, max_attempts_per_task=2,
     out_dir=os.path.join(RUN_DIR, "hf_main"), seed=42,
+    use_reference_injection=True, use_vsr_gate=True,
+    vsr_learners=["vsr"], refinject_learners=["vsr"],
+    vault_commit_min=0.9, vault_retrieve_k=2, vault_gate_check=2,
 )
 
-learners = ["frozen", "always_lora", "replay", "ewc", "controller"]
+learners = ["frozen", "always_lora", "replay", "ewc", "controller", "vsr"]
 start = time.time()
 
 def after_block(_engine=None, _details=None):
