@@ -2,6 +2,7 @@
 Embedding-based Router using MiniLM / fallback embeddings and incremental clustering.
 """
 
+import os
 from typing import Dict, List, Optional
 import numpy as np
 from open_continual_env.routing.router import Router
